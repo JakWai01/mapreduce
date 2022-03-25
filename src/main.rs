@@ -1,7 +1,5 @@
 use std::env;
 use std::fs;
-use std::fmt;
-use std::collections::HashMap;
 
 struct KVStore<T, U> {
     key: T, value: U,
@@ -26,20 +24,20 @@ fn main() {
     // pass it to Map,
     // accumulate the intermediate Map output.
     //
-    let mut intermediate: HashMap<&str,&str> = HashMap::new();
-    // intermediate.insert("key", "value");
+    let mut intermediate: Vec<KVStore<&str, &str>> = Vec::new();
     for file in &args[1..] {
         println!("{:?}", &file);
         let contents = fs::read_to_string(file)
             .expect(format!("Could not read file: {}", stringify!(&file)).as_str());
 
-        println!("{}", &contents);
-        // kva := mapf(file, contents)
-        // intermediate = append(intermediate, kva...) 
-        map(&file, &contents)
+        // println!("{}", &contents);
+
+        let kva: Vec<KVStore<&str, &str>> = map(&file, &contents);
+
+        for kv in kva {
+            intermediate.push(kv)
+        }
     }
-    
-    println!("{:?}", intermediate);
 
     // 
     // a big difference from real MapReduce is that all the
@@ -60,8 +58,8 @@ fn main() {
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
 //
-fn map(filename: &str, contents: &str) -> Vec<KVStore<&str, &str>> {
-    let mut words = contents.split(" ");
+fn map<'a>(_filename: &'a str, contents: &'a str) -> Vec<KVStore<&'a str, &'a str>> {
+    let words = contents.split(" ");
     
     let mut kva: Vec<KVStore<&str, &str>> = Vec::new();
     for word in words {
