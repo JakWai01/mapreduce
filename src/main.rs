@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 
+#[derive(Debug)]
 struct KVStore<T, U> {
     key: T, value: U,
 }
@@ -14,57 +16,65 @@ impl<T, U> KVStore<T, U> {
 }
 
 fn main() {
-    println!("Hello, world!");
-    
     let args: Vec<String> = env::args().collect();    
-    println!("{:?}", args);
-
-    //
-    // read each input file,
-    // pass it to Map,
-    // accumulate the intermediate Map output.
-    //
-    let mut intermediate: Vec<KVStore<&str, &str>> = Vec::new();
+    
+    let mut intermediate: Vec<KVStore<String, String>> = Vec::new();
     for file in &args[1..] {
         println!("{:?}", &file);
-        let contents = fs::read_to_string(file)
-            .expect(format!("Could not read file: {}", stringify!(&file)).as_str());
-
-        // println!("{}", &contents);
-
-        let kva: Vec<KVStore<&str, &str>> = map(&file, &contents);
-
+        
+        let mut contents = fs::read_to_string(file).expect(format!("Could not read file: {}", stringify!(&file)).as_str());
+        contents = sanitize_input(contents);
+        
+        let kva: Vec<KVStore<String, String>> = map(&file, &contents);
+       
         for kv in kva {
             intermediate.push(kv)
         }
     }
 
-    // 
-    // a big difference from real MapReduce is that all the
-    // intermediate data is in one place, intermediate[],
-    // rather than being partinioned into NxM buckets.
-    //
+    intermediate.sort_by_key(|i| i.key.clone());
 
-    //
-    // call Reduce on each distinct key in intermediate[],
-    // and print the result to mr-out-0.
-    //
+    println!("{:?}", intermediate);
+
+    let oname = "mr-out-0";
+    let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(oname).unwrap();
+
+    for i in 0..intermediate.len() {
+        let mut j = i+1;
+        while j < intermediate.len() && intermediate[j].key == intermediate[i].key {
+            j = j+1;
+        }
+
+        let mut values: Vec<&String> = Vec::new();
+        for k in i..j {
+            values.push(&intermediate[k].value)
+        }
+
+        let output = reduce(&intermediate[i].key, values);
+
+        if let Err(e) = write!(file, "{}", format!("{} {}\n", intermediate[i].key, output)) {
+            eprintln!("Could not write to file: {}", e);   
+        }
+    }
 }
 
-//
-// The map function is called once for each file of input. The first
-// argument is the name of the input file, and the second is the
-// file's complete contents. You should ignore the input file name,
-// and look only at the contents argument. The return value is a slice
-// of key/value pairs.
-//
-fn map<'a>(_filename: &'a str, contents: &'a str) -> Vec<KVStore<&'a str, &'a str>> {
+fn map<'a>(_filename: &'a str, contents: &String) -> Vec<KVStore<String, String>> {   
     let words = contents.split(" ");
     
-    let mut kva: Vec<KVStore<&str, &str>> = Vec::new();
+    let mut kva: Vec<KVStore<String, String>> = Vec::new();
     for word in words {
-        kva.push(KVStore::new(word , "1"));
+        kva.push(KVStore::new(String::from(word) , String::from("1")));
     }
 
     return kva
+}
+
+fn reduce(_key: &String, values: Vec<&String>) -> String {
+    values.len().to_string()
+}
+
+fn sanitize_input(mut input: String) -> String {
+    let len = input.trim_end_matches(&['\r', '\n'][..]).len();
+    input.truncate(len);  
+    input      
 }
