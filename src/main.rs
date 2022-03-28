@@ -10,6 +10,40 @@ use tarpc::{
     server::{self, incoming::Incoming, Channel},
 };
 
+type TaskType = i32;
+
+#[derive(Debug)]
+struct GetReduceCountArgs {}
+
+#[derive(Debug)]
+struct GetReduceCountReply {
+    reduce_count: i32
+}
+
+#[derive(Debug)]
+struct RequestTaskArgs {
+    worker_id: i32
+}
+
+#[derive(Debug)]
+struct RequestTaskReply {
+    task_type: TaskType,
+    task_id: i32,
+    task_file: String
+}
+
+#[derive(Debug)]
+struct ReportTaskArgs {
+    worker_id: i32,
+    task_type: TaskType,
+    task_id: i32
+}
+
+#[derive(Debug)]
+struct ReportTaskReply {
+    can_exit: bool
+}
+
 
 // This is the service definition. It looks like a trait definition.
 // It defines one RPC, hello, which takes one arg, name, and returns a String.
@@ -17,6 +51,12 @@ use tarpc::{
 trait World {
     // Returns a greeting for name.
     async fn hello(name: String) -> String;
+
+    async fn get_reduce_count(args: &'static GetReduceCountArgs) -> GetReduceCountReply;
+
+    async fn request_task(args: &'static RequestTaskArgs) -> RequestTaskReply;
+
+    async fn report_task(args: &'static ReportTaskArgs) ->  ReportTaskReply;
 }
 
 #[derive(Clone)]
@@ -31,6 +71,33 @@ impl World for HelloServer {
     fn hello(self, _: context::Context, name: String) -> Self::HelloFut {
         future::ready(format!("Hello, {name}!"))
     }
+
+    type GetReduceCountFut = Ready<GetReduceCountReply>;
+
+    fn get_reduce_count(self, _: context::Context, args: &'static GetReduceCountArgs) -> Self::GetReduceCountFut {
+        future::ready(GetReduceCountReply{
+            reduce_count: 1,
+        })
+    }
+
+    type RequestTaskFut = Ready<RequestTaskReply>;
+
+    fn request_task(self, _: context::Context, args: &'static RequestTaskArgs) -> Self::RequestTaskFut {
+        future::ready(RequestTaskReply{
+            task_id: 1,
+            task_type: 1,
+            task_file: String::from(""),
+        })
+    }
+
+    type ReportTaskFut = Ready<ReportTaskReply>;
+
+    fn report_task(self, _: context::Context, args: &'static ReportTaskArgs) -> Self::ReportTaskFut {
+        future::ready(ReportTaskReply{
+            can_exit: true,
+        })
+    }
+
 }
 
 // mrcoordinator.rs
