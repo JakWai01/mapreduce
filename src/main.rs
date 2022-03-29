@@ -14,8 +14,6 @@ use tarpc::{
 
 type TaskType = i32;
 type TaskStatus = i32;
-type ExitTask = i32;
-type Finished = i32;
 
 #[derive(Debug)]
 struct GetReduceCountArgs {}
@@ -189,11 +187,36 @@ impl Protocol for Coordinator {
     type ReportTaskFut = Ready<ReportTaskReply>;
 
     fn report_task(
-        self,
+        mut self,
         _: context::Context,
         args: &'static ReportTaskArgs,
     ) -> Self::ReportTaskFut {
-        future::ready(ReportTaskReply { can_exit: true })
+        let _lock = self.mu.lock();
+
+        let mut task: Task;
+        if args.task_type == 0 {
+            task = self.map_tasks[args.task_id as usize].clone();
+        } else if args.task_type == 1 {
+            task = self.reduce_tasks[args.task_id as usize].clone();
+        } else {
+            println!("{}", format!("Incorrect task type to report: {}", args.task_type));
+            process::exit(1)
+        }
+
+        if args.worker_id == task.worker_id && task.status == 2 {
+            task.status = 0;
+            if args.task_type == 0 && self.n_map > 0 {
+                self.n_map -= 1;
+            } else if args.task_type == 1 && self.n_reduce > 0 {
+                self.n_reduce -= 1;
+            } 
+        }
+
+        if self.n_map == 0 && self.n_reduce == 0 {
+            future::ready(ReportTaskReply { can_exit: true })
+        } else {
+            future::ready(ReportTaskReply { can_exit: false })
+        }
     }
 }
 
