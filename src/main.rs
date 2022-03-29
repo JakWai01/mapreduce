@@ -5,6 +5,8 @@ use futures::{
 use std::env;
 use std::process;
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time;
 use tarpc::{
     client, context,
     server::{self, incoming::Incoming, Channel},
@@ -84,6 +86,54 @@ impl Coordinator {
             n_reduce: 0,
         }
     }
+
+    // Task status
+    // 1 -> NotStarted
+    // 2 -> Executing
+    // -1 -> NoTask
+    // 0 -> Finished
+
+    // Typ
+    // -1 NoTask
+    // 0 MapTask
+    // 1 ReduceTask
+    fn select_task(&self, task_list: &Vec<Task>, worker_id: i32) -> Task {
+        let mut task: Task;
+
+        for i in 0..task_list.len() {
+            if task_list[i].status == 1 {
+                task = task_list[i].clone();
+                task.status = 2;
+                task.worker_id = worker_id;
+                return task;
+            }
+        }
+
+        Task {
+            typ: -1,
+            status: 0,
+            index: -1,
+            file: String::from(""),
+            worker_id: -1,
+        }
+    }
+
+    async fn wait_for_task(&self, mut task: Task) {
+        if task.typ != 0 && task.typ != 1 {
+            return;
+        }
+
+        let ten_seconds = time::Duration::from_millis(10000);
+        thread::sleep(ten_seconds);
+
+        let _lock = self.mu.lock().unwrap();
+
+        // Timeout
+        if task.status == 2 {
+            task.status = 1;
+            task.worker_id = -1;
+        }
+    }
 }
 
 impl Protocol for Coordinator {
@@ -94,7 +144,7 @@ impl Protocol for Coordinator {
         _: context::Context,
         args: &'static GetReduceCountArgs,
     ) -> Self::GetReduceCountFut {
-        self.mu.lock();
+        let _lock = self.mu.lock();
 
         future::ready(GetReduceCountReply {
             reduce_count: self.reduce_tasks.len() as i32,
@@ -108,11 +158,32 @@ impl Protocol for Coordinator {
         _: context::Context,
         args: &'static RequestTaskArgs,
     ) -> Self::RequestTaskFut {
-        future::ready(RequestTaskReply {
-            task_id: 1,
-            task_type: 1,
-            task_file: String::from(""),
-        })
+        let _lock = &self.mu.lock();
+
+        let task: Task;
+        if self.n_map > 0 {
+            task = self.select_task(&self.map_tasks, args.worker_id);
+        } else if self.n_reduce > 0 {
+            task = self.select_task(&self.reduce_tasks, args.worker_id);
+        } else {
+            task = Task {
+                typ: 2,
+                status: 0,
+                index: -1,
+                file: String::from(""),
+                worker_id: -1,
+            }
+        }
+
+        let reply = RequestTaskReply {
+            task_type: task.typ,
+            task_id: task.index,
+            task_file: task.file.clone(),
+        };
+
+        self.wait_for_task(task);
+
+        future::ready(reply)
     }
 
     type ReportTaskFut = Ready<ReportTaskReply>;
