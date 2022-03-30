@@ -2,6 +2,7 @@ use futures::{
     future::{self, Ready},
     prelude::*,
 };
+use glob::glob;
 use std::env;
 use std::process;
 use std::sync::{Arc, Mutex};
@@ -255,4 +256,31 @@ async fn worker(client: &ProtocolClient) -> anyhow::Result<()> {
 
     // println!("{hello}");
     Ok(())
+}
+
+fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
+    let mut coordinator = Coordinator::new();
+    
+    let n_map = files.len();
+    coordinator.n_map = n_map as i32;
+    coordinator.n_reduce = n_reduce;
+    coordinator.map_tasks = Vec::new();
+    coordinator.reduce_tasks = Vec::new();
+
+    for i in 0..n_map {
+        let m_task = Task{typ: 0, status: 1, index: i as i32, file: files[i].clone(), worker_id: -1};
+        coordinator.map_tasks.push(m_task);
+    }
+    for i in 0..n_reduce {
+        let r_task = Task{typ: 1, status: 1, index: i as i32, file: String::from(""), worker_id: -1};
+        coordinator.reduce_tasks.push(r_task);
+    }
+
+    let out_files = glob("mr-out*").unwrap();
+    for f in out_files.into_iter() {
+        std::fs::remove_file(f).expect(format!("Cannot remove file: {}", f));
+    }
+
+
+    coordinator
 }
