@@ -4,6 +4,8 @@ use futures::{
 };
 use glob::glob;
 use std::env;
+use std::fs;
+use std::path::Path;
 use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -84,6 +86,12 @@ impl Coordinator {
             n_map: 0,
             n_reduce: 0,
         }
+    }
+
+    fn done(&self) -> bool {
+        let _lock = self.mu.lock();
+
+        return self.n_map == 0 && self.n_reduce == 0;
     }
 
     // Task status
@@ -200,7 +208,10 @@ impl Protocol for Coordinator {
         } else if args.task_type == 1 {
             task = self.reduce_tasks[args.task_id as usize].clone();
         } else {
-            println!("{}", format!("Incorrect task type to report: {}", args.task_type));
+            println!(
+                "{}",
+                format!("Incorrect task type to report: {}", args.task_type)
+            );
             process::exit(1)
         }
 
@@ -210,7 +221,7 @@ impl Protocol for Coordinator {
                 self.n_map -= 1;
             } else if args.task_type == 1 && self.n_reduce > 0 {
                 self.n_reduce -= 1;
-            } 
+            }
         }
 
         if self.n_map == 0 && self.n_reduce == 0 {
@@ -260,7 +271,6 @@ async fn worker(client: &ProtocolClient) -> anyhow::Result<()> {
 
 fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
     let mut coordinator = Coordinator::new();
-    
     let n_map = files.len();
     coordinator.n_map = n_map as i32;
     coordinator.n_reduce = n_reduce;
@@ -268,19 +278,33 @@ fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
     coordinator.reduce_tasks = Vec::new();
 
     for i in 0..n_map {
-        let m_task = Task{typ: 0, status: 1, index: i as i32, file: files[i].clone(), worker_id: -1};
+        let m_task = Task {
+            typ: 0,
+            status: 1,
+            index: i as i32,
+            file: files[i].clone(),
+            worker_id: -1,
+        };
         coordinator.map_tasks.push(m_task);
     }
     for i in 0..n_reduce {
-        let r_task = Task{typ: 1, status: 1, index: i as i32, file: String::from(""), worker_id: -1};
+        let r_task = Task {
+            typ: 1,
+            status: 1,
+            index: i as i32,
+            file: String::from(""),
+            worker_id: -1,
+        };
         coordinator.reduce_tasks.push(r_task);
     }
 
-    let out_files = glob("mr-out*").unwrap();
-    for f in out_files.into_iter() {
-        std::fs::remove_file(f).expect(format!("Cannot remove file: {}", f));
+    for path in glob("mr-out*").unwrap().filter_map(Result::ok) {
+        std::fs::remove_file(path).expect(format!("Cannot remove file: {}", path.display()));
     }
 
+    fs::remove_dir_all("/tmp").expect("Cannot remove temp directory");
+
+    fs::create_dir_all(Path::new("/tmp")).expect("Cannot create temp directory");
 
     coordinator
 }
