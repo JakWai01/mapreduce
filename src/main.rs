@@ -2,7 +2,10 @@ use futures::{
     future::{self, Ready},
     prelude::*,
 };
+use std::fs::File;
 use glob::glob;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -14,6 +17,18 @@ use tarpc::{
     client, context,
     server::{self, incoming::Incoming, Channel},
 };
+
+#[derive(Debug)]
+struct KVStore<T, U> {
+    key: T,
+    value: U,
+}
+
+impl<T, U> KVStore<T, U> {
+    fn new(key: T, value: U) -> Self {
+        KVStore { key, value }
+    }
+}
 
 type TaskType = i32;
 type TaskStatus = i32;
@@ -307,4 +322,55 @@ fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
     fs::create_dir_all(Path::new("/tmp")).expect("Cannot create temp directory");
 
     coordinator
+}
+
+fn map<'a>(_filename: &'a str, contents: &String) -> Vec<KVStore<String, String>> {
+    let words = contents.split(" ");
+
+    let mut kva: Vec<KVStore<String, String>> = Vec::new();
+    for word in words {
+        kva.push(KVStore::new(String::from(word), String::from("1")));
+    }
+
+    return kva;
+}
+
+fn reduce(_key: &String, values: Vec<&String>) -> String {
+    values.len().to_string()
+}
+
+fn i_hash<T: Hash>(t: &T) -> i32 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish() as i32
+}
+
+fn do_map(file_path: &String, map_id: i32) {
+    let path = Path::new(file_path);
+    let display = path.display();
+    
+    let mut s = fs::read_to_string(&path).expect("Could not read file");
+
+    let kva = map(file_path, &s);
+    // write_map_output(kva, map_id);
+}
+
+fn write_map_output(kva: Vec<KVStore<String, String>>, map_id: i32, n_reduce: i32) {
+    // use io buffers to reduce disk I/O, which greatly improves
+    // performance  when running in containers with mounted volumes
+    let prefix: String = format!("{}/mr-{}", "/tmp", map_id);
+    let files: Vec<fs::File> = Vec::new();
+    // buffers
+    // encoders
+
+    // create temp files, use pid to uniquely identify this worker
+    for i in 0..n_reduce {
+        let file_path: String = format!("{}-{}-{}", prefix, i, std::process::id());
+        let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(file_path).unwrap();
+
+        files.push(file);
+        // buf
+        // buffers
+        // encoders
+    }
 }
