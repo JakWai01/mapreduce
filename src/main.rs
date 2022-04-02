@@ -2,6 +2,8 @@ use futures::{
     future::{self, Ready},
     prelude::*,
 };
+use std::io::{BufReader, BufRead};
+use std::collections::HashMap;
 use std::fs::File;
 use glob::glob;
 use std::collections::hash_map::DefaultHasher;
@@ -81,6 +83,11 @@ struct Coordinator {
     reduce_tasks: Vec<Task>,
     n_map: i32,
     n_reduce: i32,
+}
+
+struct MRFile {
+    name: String,
+    file: fs::File,
 }
 
 // This is the service definition. It looks like a trait definition.
@@ -242,9 +249,7 @@ impl Protocol for Coordinator {
         if self.n_map == 0 && self.n_reduce == 0 {
             future::ready(ReportTaskReply { can_exit: true })
         } else {
-            future::ready(ReportTaskReply { can_exit: false })
-        }
-    }
+            future::ready(ReportTaskReply { can_exit: false }) } }
 }
 
 #[tokio::main]
@@ -335,7 +340,7 @@ fn map<'a>(_filename: &'a str, contents: &String) -> Vec<KVStore<String, String>
     return kva;
 }
 
-fn reduce(_key: &String, values: Vec<&String>) -> String {
+fn reduce(_key: &String, values: HashMap<String, String>) -> String {
     values.len().to_string()
 }
 
@@ -355,22 +360,76 @@ fn do_map(file_path: &String, map_id: i32) {
     // write_map_output(kva, map_id);
 }
 
+
+// Just write the things to files, done
 fn write_map_output(kva: Vec<KVStore<String, String>>, map_id: i32, n_reduce: i32) {
-    // use io buffers to reduce disk I/O, which greatly improves
-    // performance  when running in containers with mounted volumes
     let prefix: String = format!("{}/mr-{}", "/tmp", map_id);
-    let files: Vec<fs::File> = Vec::new();
-    // buffers
-    // encoders
+    let files: Vec<MRFile> = Vec::new();
 
     // create temp files, use pid to uniquely identify this worker
     for i in 0..n_reduce {
         let file_path: String = format!("{}-{}-{}", prefix, i, std::process::id());
         let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(file_path).unwrap();
-
-        files.push(file);
-        // buf
-        // buffers
-        // encoders
+        files.push(MRFile{
+            name: file_path,
+            file: file
+        });
     }
+
+    // write map outputs to temp files
+    for kv in kva {
+        let idx: i32 = i_hash(&kv.key) % n_reduce;
+        if let Err(e) = write!(files[idx as usize].file, "{}", format!("{}, {}\n", &kv.key, &kv.value)) {
+            eprintln!("Could not write to file: {}", e);
+        }
+    }
+
+    // atomically rename temp files to ensure no one observes partial files
+    for i in 0..files.len() {
+        let new_path: String = format!("{}-{}", prefix, i);
+        fs::rename(files[i].name, new_path);
+    }
+}
+
+fn do_reduce(reduce_id: String) {
+    let kv_map: HashMap<String, String> = HashMap::new(); 
+    let kv: KVStore<String, String>;
+
+    for path in glob(format!("{}/mr-{}-{}", "/tmp", "*", reduce_id)).unwrap().filter_map(Result::ok) {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(file);
+
+        for (index, line) in reader.lines().enumerate() {
+            let line = line.unwrap();
+
+            let mut split = line.split(",");
+            let split_vec: Vec<&str> = split.collect();
+
+            kv_map.insert(String::from(split_vec[0]), String::from(split_vec[1]));
+        }
+    }
+
+    // write_reduce_output(reducef, kv_map, reduce_id)
+}
+
+fn write_reduce_output(kv_map: HashMap<String, String>, reduce_id: i32) {
+    // sort the kv_map by key
+    let mut keys: Vec<String>;
+    for (key, value) in kv_map.into_iter() {
+        keys.push(key);
+    }
+    keys.sort();
+
+    // Create temp file
+    let file_path: String = format!("{}/mr-out-{}-{}", "/tmp", reduce_id, std::process::id());
+    let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(file_path).unwrap();
+
+    for key in keys {
+        if let Err(e) = write!(file, "{}", format!("{}, {}\n", key, reduce(&key, kv_map))) {
+            eprintln!("Could not write to file");
+        }
+    }
+
+    let new_path: String = format!("mr-out-{}", reduce_id);
+    fs::rename(file_path, new_path);
 }
