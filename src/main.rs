@@ -95,7 +95,7 @@ struct MRFile {
 #[tarpc::service]
 trait Protocol {
     async fn get_reduce_count(args: &'static GetReduceCountArgs) -> GetReduceCountReply;
-    async fn request_task(args: &'static RequestTaskArgs) -> RequestTaskReply;
+    async fn request_task(args: RequestTaskArgs) -> RequestTaskReply;
     async fn report_task(args: &'static ReportTaskArgs) -> ReportTaskReply;
 }
 
@@ -185,7 +185,7 @@ impl Protocol for Coordinator {
     fn request_task(
         self,
         _: context::Context,
-        args: &'static RequestTaskArgs,
+        args: RequestTaskArgs,
     ) -> Self::RequestTaskFut {
         let _lock = &self.mu.lock();
 
@@ -286,7 +286,38 @@ async fn worker(client: &ProtocolClient) -> anyhow::Result<()> {
     // let hello = client.hello(context::current(), "Jakob".to_string()).await?;
 
     // println!("{hello}");
-    Ok(())
+    let n_reduce = client.get_reduce_count(context::current(), &GetReduceCountArgs{});
+
+    loop {
+        let args = RequestTaskArgs{worker_id: std::process::id() as i32};
+        let reply = client.request_task(context::current(), args).await?;
+
+        if reply.task_type == 2 {
+            println!("All tasks are done, worker exiting.")
+            ()
+        }
+
+        let exit: bool = false;
+
+        if reply.task_type == -1 {
+            // the entire mr job not done, but all
+            // map or reduce tasks are executing
+        } else if reply.task_type == 0 {
+            do_map(&reply.task_file, reply.task_id);
+            exit = client.report_task(context::current(), &ReportTaskArgs{task_id: std::process::id() as i32, task_type: 1, worker_id: reply.task_id}).await?.can_exit;
+        } else if reply.task_type == 1 {
+            do_reduce(reply.task_id);
+            exit = client.report_task(context::current(), &ReportTaskArgs{task_id: std::process::id() as i32, task_type: 2, worker_id: reply.task_id}).await?.can_exit;
+        }
+
+        if exit {
+            println!("Master exited or all tasks done, worker exiting");
+            ()
+        }
+
+        let two_hundred_ms = time::Duration::from_millis(200);
+        thread::sleep(two_hundred_ms);
+    }
 }
 
 fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
@@ -391,7 +422,7 @@ fn write_map_output(kva: Vec<KVStore<String, String>>, map_id: i32, n_reduce: i3
     }
 }
 
-fn do_reduce(reduce_id: String) {
+fn do_reduce(reduce_id: i32) {
     let kv_map: HashMap<String, String> = HashMap::new(); 
     let kv: KVStore<String, String>;
 
@@ -409,7 +440,7 @@ fn do_reduce(reduce_id: String) {
         }
     }
 
-    // write_reduce_output(reducef, kv_map, reduce_id)
+    write_reduce_output(kv_map, reduce_id)
 }
 
 fn write_reduce_output(kv_map: HashMap<String, String>, reduce_id: i32) {
