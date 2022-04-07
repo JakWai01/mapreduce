@@ -1,7 +1,7 @@
 use futures::{
     future::{self, Ready},
-    prelude::*,
 };
+use itertools::Itertools;
 use std::io::{BufReader, BufRead};
 use std::collections::HashMap;
 use std::fs::File;
@@ -15,9 +15,10 @@ use std::process;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time;
+use std::io::Write;
 use tarpc::{
     client, context,
-    server::{self, incoming::Incoming, Channel},
+    server::{self, Channel},
 };
 
 #[derive(Debug)]
@@ -96,7 +97,7 @@ struct MRFile {
 trait Protocol {
     async fn get_reduce_count(args: &'static GetReduceCountArgs) -> GetReduceCountReply;
     async fn request_task(args: RequestTaskArgs) -> RequestTaskReply;
-    async fn report_task(args: &'static ReportTaskArgs) -> ReportTaskReply;
+    async fn report_task(args: ReportTaskArgs) -> ReportTaskReply;
 }
 
 impl Coordinator {
@@ -220,7 +221,7 @@ impl Protocol for Coordinator {
     fn report_task(
         mut self,
         _: context::Context,
-        args: &'static ReportTaskArgs,
+        args: ReportTaskArgs,
     ) -> Self::ReportTaskFut {
         let _lock = self.mu.lock();
 
@@ -294,20 +295,19 @@ async fn worker(client: &ProtocolClient) -> anyhow::Result<()> {
 
         if reply.task_type == 2 {
             println!("All tasks are done, worker exiting.")
-            ()
         }
 
-        let exit: bool = false;
+        let mut exit: bool = false;
 
         if reply.task_type == -1 {
             // the entire mr job not done, but all
             // map or reduce tasks are executing
         } else if reply.task_type == 0 {
             do_map(&reply.task_file, reply.task_id);
-            exit = client.report_task(context::current(), &ReportTaskArgs{task_id: std::process::id() as i32, task_type: 1, worker_id: reply.task_id}).await?.can_exit;
+            exit = client.report_task(context::current(), ReportTaskArgs{task_id: std::process::id() as i32, task_type: 1, worker_id: reply.task_id}).await?.can_exit;
         } else if reply.task_type == 1 {
             do_reduce(reply.task_id);
-            exit = client.report_task(context::current(), &ReportTaskArgs{task_id: std::process::id() as i32, task_type: 2, worker_id: reply.task_id}).await?.can_exit;
+            exit = client.report_task(context::current(), ReportTaskArgs{task_id: std::process::id() as i32, task_type: 2, worker_id: reply.task_id}).await?.can_exit;
         }
 
         if exit {
@@ -350,7 +350,7 @@ fn make_coordinator(files: Vec<String>, n_reduce: i32) -> Coordinator {
     }
 
     for path in glob("mr-out*").unwrap().filter_map(Result::ok) {
-        std::fs::remove_file(path).expect(format!("Cannot remove file: {}", path.display()));
+        std::fs::remove_file(&path).expect(format!("Cannot remove file: {}", path.display()).as_str());
     }
 
     fs::remove_dir_all("/tmp").expect("Cannot remove temp directory");
@@ -371,7 +371,7 @@ fn map<'a>(_filename: &'a str, contents: &String) -> Vec<KVStore<String, String>
     return kva;
 }
 
-fn reduce(_key: &String, values: HashMap<String, String>) -> String {
+fn reduce(_key: &String, values: &HashMap<String, String>) -> String {
     values.len().to_string()
 }
 
@@ -395,12 +395,12 @@ fn do_map(file_path: &String, map_id: i32) {
 // Just write the things to files, done
 fn write_map_output(kva: Vec<KVStore<String, String>>, map_id: i32, n_reduce: i32) {
     let prefix: String = format!("{}/mr-{}", "/tmp", map_id);
-    let files: Vec<MRFile> = Vec::new();
+    let mut files: Vec<MRFile> = Vec::new();
 
     // create temp files, use pid to uniquely identify this worker
     for i in 0..n_reduce {
         let file_path: String = format!("{}-{}-{}", prefix, i, std::process::id());
-        let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(file_path).unwrap();
+        let file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(&file_path).unwrap();
         files.push(MRFile{
             name: file_path,
             file: file
@@ -418,15 +418,15 @@ fn write_map_output(kva: Vec<KVStore<String, String>>, map_id: i32, n_reduce: i3
     // atomically rename temp files to ensure no one observes partial files
     for i in 0..files.len() {
         let new_path: String = format!("{}-{}", prefix, i);
-        fs::rename(files[i].name, new_path);
+        fs::rename(&files[i].name, new_path);
     }
 }
 
 fn do_reduce(reduce_id: i32) {
-    let kv_map: HashMap<String, String> = HashMap::new(); 
+    let mut kv_map: HashMap<String, String> = HashMap::new(); 
     let kv: KVStore<String, String>;
 
-    for path in glob(format!("{}/mr-{}-{}", "/tmp", "*", reduce_id)).unwrap().filter_map(Result::ok) {
+    for path in glob(format!("{}/mr-{}-{}", "/tmp", "*", reduce_id).as_str()).unwrap().filter_map(Result::ok) {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
 
@@ -444,19 +444,12 @@ fn do_reduce(reduce_id: i32) {
 }
 
 fn write_reduce_output(kv_map: HashMap<String, String>, reduce_id: i32) {
-    // sort the kv_map by key
-    let mut keys: Vec<String>;
-    for (key, value) in kv_map.into_iter() {
-        keys.push(key);
-    }
-    keys.sort();
-
     // Create temp file
     let file_path: String = format!("{}/mr-out-{}-{}", "/tmp", reduce_id, std::process::id());
-    let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(file_path).unwrap();
+    let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(&file_path).unwrap();
 
-    for key in keys {
-        if let Err(e) = write!(file, "{}", format!("{}, {}\n", key, reduce(&key, kv_map))) {
+    for key in kv_map.keys().sorted() {
+        if let Err(_) = write!(file, "{}", format!("{}, {}\n", key, reduce(&key, &kv_map))) {
             eprintln!("Could not write to file");
         }
     }
