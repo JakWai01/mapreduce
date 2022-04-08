@@ -1,0 +1,36 @@
+syntax = "proto3";
+package mapreduce;
+
+service Coordinator {
+    rpc GetReduceCount (GetReduceCountArgs) returns (GetReduceCountReply);
+    rpc RequestTask (RequestTaskArgs) returns (RequestTaskReply);
+    rpc ReportTask (ReportTaskArgs) returns (ReportTaskReply);
+}
+
+message GetReduceCountArgs {
+
+}
+
+message GetReduceCountReply {
+    int32 reduce_count = 1;
+}
+
+message RequestTaskArgs {
+    int32 worker_id = 1;
+}
+
+message RequestTaskReply {
+    int32 task_type = 1;
+    int32 task_id = 2;
+    string task_file = 3;
+}
+
+message ReportTaskArgs {
+    int32 worker_id = 1;
+    int32 task_type = 2;
+    int32 task_id = 3;
+}
+
+message ReportTaskReply {
+    bool can_exit = 1;
+}
