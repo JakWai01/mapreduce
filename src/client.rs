@@ -14,6 +14,9 @@ use std::io::{BufReader, BufRead};
 use itertools::Itertools;
 use std::env;
 use std::io::Write;
+use map_reduce::coordinator_server::{Coordinator, CoordinatorServer};
+use tonic::{transport::Server, Request, Response, Status};
+mod server;
 
 pub mod map_reduce {
     tonic::include_proto!("mapreduce");
@@ -38,14 +41,8 @@ struct MRFile {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {                                              
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() < 2 {
-        eprintln!("Usage: mrmaster inputfiles...");
-        process::exit(1);
-    }
-
     let mut client = CoordinatorClient::connect("http://[::1]:50051").await?;
+
 
     // let request = tonic::Request::new(GetReduceCountArgs {});
 
@@ -117,7 +114,7 @@ impl Worker {
         }
 
         for kv in kva {
-            let idx: i32 = i_hash(&kv.key) % self.n_reduce;
+            let idx: i32 = (i_hash(&kv.key) % self.n_reduce).abs();
             if let Err(e) = write!(files[idx as usize].file, "{}", format!("{}, {}\n", &kv.key, &kv.value)) {
                 eprintln!("Could not write to file: {}", e);
             }
@@ -134,7 +131,7 @@ impl Worker {
         let path = Path::new(file_path);
         let display = path.display();
         
-        let mut s = fs::read_to_string(&path).expect("Could not read file");
+        let s = fs::read_to_string(&path).expect("Could not read file");
 
         let kva = map(file_path, &s);
         self.write_map_output(kva, map_id);
