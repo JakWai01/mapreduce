@@ -83,10 +83,10 @@ impl Worker {
                 // map or reduce tasks are executing
             } else if reply.task_type == 0 {
                 self.do_map(&reply.task_file, reply.task_id);
-                exit = client.report_task(tonic::Request::new(ReportTaskArgs{task_id: std::process::id() as i32, task_type: 1, worker_id: reply.task_id})).await?.into_inner().can_exit;
+                exit = client.report_task(tonic::Request::new(ReportTaskArgs{worker_id: std::process::id() as i32, task_type: 0, task_id: reply.task_id})).await?.into_inner().can_exit;
             } else if reply.task_type == 1 {
                 do_reduce(reply.task_id);
-                exit = client.report_task(tonic::Request::new(ReportTaskArgs{task_id: std::process::id() as i32, task_type: 2, worker_id: reply.task_id})).await?.into_inner().can_exit;
+                exit = client.report_task(tonic::Request::new(ReportTaskArgs{worker_id: std::process::id() as i32, task_type: 1, task_id: reply.task_id})).await?.into_inner().can_exit;
             }
 
             if exit {
