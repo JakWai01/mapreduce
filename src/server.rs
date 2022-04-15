@@ -124,13 +124,12 @@ impl Coordinator for MRCoordinator {
         println!("Worker ID {}", worker_id);
         println!("Task worker_id {}", task.worker_id);
         println!("Task status {} (should be 2)", task.status);
+
         if worker_id == task.worker_id && task.status == 2 {
             task.status = 0;
             if task_type == 0 && *self.n_map.read().unwrap() > 0 {
                 let mut n_map = self.n_map.write().unwrap();
-                println!("{}", *self.n_map.read().unwrap());
                 *n_map -= 1; 
-                println!("{}", *self.n_map.read().unwrap())
             } else if task_type == 1 && *self.n_reduce.read().unwrap() > 0 {
                 let mut n_reduce = self.n_reduce.write().unwrap();
                 *n_reduce -= 1;
@@ -228,7 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.remove(0);
 
     let addr = "[::1]:50051".parse()?;
-    let coordinator: MRCoordinator = make_coordinator(args, 2); 
+    let coordinator: MRCoordinator = make_coordinator(args, 1); 
     Server::builder()
         .add_service(CoordinatorServer::new(coordinator))
         .serve(addr)
