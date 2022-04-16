@@ -14,10 +14,21 @@ use glob::glob;
 use std::fs;
 use std::path::Path;
 use std::env;
-
+    
 pub mod map_reduce {
     tonic::include_proto!("mapreduce");
 }
+
+// Task status
+pub const NOTSTARTED: i32 = 1;
+pub const EXECUTING: i32 = 2;
+pub const FINISHED: i32 = 0;
+
+// Task type
+pub const MAPTASK: i32 = 0;
+pub const REDUCETASK: i32 = 1;
+pub const EXITTASK: i32 = 2;
+pub const NOTASK: i32 = -1;
 
 #[derive(Clone, Debug)]
 struct Task {
@@ -73,8 +84,8 @@ impl Coordinator for MRCoordinator {
             task = self.select_task(&mut *self.reduce_tasks.write().unwrap(), id);
         } else {
             task = Task {
-                typ: 2,
-                status: 0,
+                typ: EXITTASK,
+                status: FINISHED,
                 index: -1,
                 file: String::from(""),
                 worker_id: -1,
@@ -108,11 +119,9 @@ impl Coordinator for MRCoordinator {
 
         let mut task: Task;
 
-        if task_type == 0 {
-            println!("0");
+        if task_type == MAPTASK {
             task = self.map_tasks.read().unwrap()[task_id as usize].clone();
-        } else if task_type == 1 {
-            println!("1");
+        } else if task_type == REDUCETASK {
             task = self.reduce_tasks.read().unwrap()[task_id as usize].clone();
         } else {
             println!(
@@ -126,23 +135,21 @@ impl Coordinator for MRCoordinator {
         println!("Task worker_id {}", task.worker_id);
         println!("Task status {} (should be 2)", task.status);
 
-        if worker_id == task.worker_id && task.status == 2 {
+        if worker_id == task.worker_id && task.status == EXITTASK {
             task.status = 0;
-            if task_type == 0 && *self.n_map.read().unwrap() > 0 {
+            if task_type == MAPTASK && *self.n_map.read().unwrap() > 0 {
                 let mut n_map = self.n_map.write().unwrap();
                 *n_map -= 1; 
-            } else if task_type == 1 && *self.n_reduce.read().unwrap() > 0 {
+            } else if task_type == REDUCETASK && *self.n_reduce.read().unwrap() > 0 {
                 let mut n_reduce = self.n_reduce.write().unwrap();
                 *n_reduce -= 1;
             }
         }
 
         if *self.n_map.read().unwrap() == 0 && *self.n_reduce.read().unwrap() == 0 {
-            println!("Can exit");
             let reply = map_reduce::ReportTaskReply { can_exit: true };
             Ok(Response::new(reply))
         } else {
-            println!("Can't exit");
             let reply = map_reduce::ReportTaskReply { can_exit: false };
             Ok(Response::new(reply))
         }
@@ -166,24 +173,10 @@ impl MRCoordinator {
         return *self.n_map.read().unwrap() == 0 && *self.n_reduce.read().unwrap() == 0;
     }
 
-    // Task status
-    // 1 -> NotStarted
-    // 2 -> Executing
-    // -1 -> NoTask
-    // 0 -> Finished
-
-    // Typ
-    // -1 NoTask
-    // 0 MapTask
-    // 1 ReduceTask
     fn select_task(&self, task_list: &mut Vec<Task>, worker_id: i32) -> Task {
-
-        println!("selectTask WorkerId {}", worker_id);
-
         for i in 0..task_list.len() {
-            if task_list[i].status == 1 {
-                println!("INSIDE");
-                task_list[i].status = 2;
+            if task_list[i].status == NOTSTARTED {
+                task_list[i].status = EXECUTING;
                 task_list[i].worker_id = worker_id;
                 return task_list[i].clone();
             }
@@ -191,7 +184,7 @@ impl MRCoordinator {
 
         Task {
             typ: -1,
-            status: 0,
+            status: EXECUTING,
             index: -1,
             file: String::from(""),
             worker_id: -1,
@@ -199,7 +192,7 @@ impl MRCoordinator {
     }
 
     async fn wait_for_task(&self, mut task: Task) {
-        if task.typ != 0 && task.typ != 1 {
+        if task.typ != MAPTASK && task.typ != REDUCETASK {
             return;
         }
 
@@ -209,8 +202,8 @@ impl MRCoordinator {
         let _lock = self.mu.lock().unwrap();
 
         // Timeout
-        if task.status == 2 {
-            task.status = 1;
+        if task.status == EXECUTING {
+            task.status = NOTSTARTED;
             task.worker_id = -1;
         }
     }
@@ -247,8 +240,8 @@ pub fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
 
     for i in 0..n_map {
         let m_task = Task {
-            typ: 0,
-            status: 1,
+            typ: MAPTASK,
+            status: NOTSTARTED,
             index: i as i32,
             file: files[i].clone(),
             worker_id: -1,
@@ -257,8 +250,8 @@ pub fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
     }
     for i in 0..n_reduce {
         let r_task = Task {
-            typ: 1,
-            status: 1,
+            typ: REDUCETASK,
+            status: NOTSTARTED,
             index: i as i32,
             file: String::from(""),
             worker_id: -1,

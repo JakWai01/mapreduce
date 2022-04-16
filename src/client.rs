@@ -71,20 +71,20 @@ impl Worker {
         loop {
             let reply = client.request_task(tonic::Request::new(RequestTaskArgs{worker_id: (std::process::id() as i32)})).await?.into_inner();
 
-            if reply.task_type == 2 {
+            if reply.task_type == server::EXITTASK {
                 println!("All tasks are done, worker exiting.");
                 process::exit(0);
             }
 
             let mut exit: bool = false;
 
-            if reply.task_type == -1 {
+            if reply.task_type == server::NOTASK {
                 // the entire mr job not done, but all
                 // map or reduce tasks are executing
-            } else if reply.task_type == 0 {
+            } else if reply.task_type == server::MAPTASK {
                 self.do_map(&reply.task_file, reply.task_id);
                 exit = client.report_task(tonic::Request::new(ReportTaskArgs{worker_id: std::process::id() as i32, task_type: 0, task_id: reply.task_id})).await?.into_inner().can_exit;
-            } else if reply.task_type == 1 {
+            } else if reply.task_type == server::REDUCETASK {
                 do_reduce(reply.task_id);
                 exit = client.report_task(tonic::Request::new(ReportTaskArgs{worker_id: std::process::id() as i32, task_type: 1, task_id: reply.task_id})).await?.into_inner().can_exit;
             }
