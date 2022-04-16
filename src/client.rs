@@ -159,15 +159,12 @@ fn do_reduce(reduce_id: i32) {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
 
-        // Wir lesen gerade das file :D
         for (index, line) in reader.lines().enumerate() {
             let line = line.unwrap();
             println!("This is the line: {}", line);
             let mut split = line.split(",");
             let split_vec: Vec<&str> = split.collect();
             println!("Parts {:?}", split_vec);
-            // So the problem is that Hello has no quantifier. It should though
-            // In here, we acess [1] but the length of the array is only 1
             kv_map.insert(String::from(split_vec[0]), String::from(split_vec[1]));
         }
     }

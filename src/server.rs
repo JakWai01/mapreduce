@@ -100,17 +100,18 @@ impl Coordinator for MRCoordinator {
         
         let req = request.into_inner();
 
-        let task_id: i32 = req.task_type;
+        let task_id: i32 = req.task_id;
         let worker_id: i32 = req.worker_id;
         let task_type: i32 = req.task_type;
        
         let _lock = self.mu.lock();
 
         let mut task: Task;
-        if task_id == 0 {
+
+        if task_type == 0 {
             println!("0");
             task = self.map_tasks.read().unwrap()[task_id as usize].clone();
-        } else if req.task_type == 1 {
+        } else if task_type == 1 {
             println!("1");
             task = self.reduce_tasks.read().unwrap()[task_id as usize].clone();
         } else {
@@ -227,7 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.remove(0);
 
     let addr = "[::1]:50051".parse()?;
-    let coordinator: MRCoordinator = make_coordinator(args, 1); 
+    let coordinator: MRCoordinator = make_coordinator(args, 2); 
     Server::builder()
         .add_service(CoordinatorServer::new(coordinator))
         .serve(addr)
@@ -265,13 +266,9 @@ pub fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
         coordinator.reduce_tasks.write().unwrap().push(r_task);
     }
 
-    for path in glob("mr-out*").unwrap().filter_map(Result::ok) {
+    for path in glob("/tmp/mr*").unwrap().filter_map(Result::ok) {
         std::fs::remove_file(&path).expect(format!("Cannot remove file: {}", path.display()).as_str());
     }
-
-    // fs::remove_dir_all("/tmp").expect("Cannot remove temp directory");
-
-    // fs::create_dir_all(Path::new("/tmp")).expect("Cannot create temp directory");
 
     coordinator
 }
