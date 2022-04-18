@@ -12,10 +12,7 @@ use glob::glob;
 use std::fs::File;
 use std::io::{BufReader, BufRead};
 use itertools::Itertools;
-use std::env;
 use std::io::Write;
-use map_reduce::coordinator_server::{Coordinator, CoordinatorServer};
-use tonic::{transport::Server, Request, Response, Status};
 mod server;
 
 pub mod map_reduce {
@@ -42,13 +39,6 @@ struct MRFile {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {                                              
     let mut client = CoordinatorClient::connect("http://[::1]:50051").await?;
-
-
-    // let request = tonic::Request::new(GetReduceCountArgs {});
-
-    // let response = client.get_reduce_count(request).await?;
-
-    // println!("Response={:?}", &response.into_inner().reduce_count);
 
     let mut w = Worker{
         n_reduce: 0,
@@ -123,13 +113,12 @@ impl Worker {
         // atomically rename temp files to ensure no one observes partial files
         for i in 0..files.len() {
             let new_path: String = format!("{}-{}", prefix, i);
-            fs::rename(&files[i].name, new_path);
+            fs::rename(&files[i].name, new_path).expect("Could not rename file");
         }
     }
 
     fn do_map(self, file_path: &String, map_id: i32) {
         let path = Path::new(file_path);
-        let display = path.display();
         
         let s = fs::read_to_string(&path).expect("Could not read file");
 
@@ -137,38 +126,34 @@ impl Worker {
         self.write_map_output(kva, map_id);
     }
 }
-
 fn map<'a>(_filename: &'a str, contents: &String) -> Vec<KVStore<String, String>> {
     let words = contents.split(" ");
 
     let mut kva: Vec<KVStore<String, String>> = Vec::new();
     for word in words {
-        println!("Word: {}", word);
         kva.push(KVStore::new(String::from(word), String::from("1")));
     }
 
-    println!("kva {:?}", kva);
     return kva;
 }
 
 fn do_reduce(reduce_id: i32) {
-    let mut kv_map: HashMap<String, String> = HashMap::new(); 
-    let kv: KVStore<String, String>;
+
+    let mut kv_map: HashMap<String, Vec<String>> = HashMap::new(); 
 
     for path in glob(format!("{}/mr-{}-{}", "/tmp", "*", reduce_id).as_str()).unwrap().filter_map(Result::ok) {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(file);
 
-        for (index, line) in reader.lines().enumerate() {
+        for (_, line) in reader.lines().enumerate() {
             let line = line.unwrap();
-            println!("This is the line: {}", line);
-            let mut split = line.split(",");
+            let split = line.split(",");
             let split_vec: Vec<&str> = split.collect();
-            println!("Parts {:?}", split_vec);
-            kv_map.insert(String::from(split_vec[0]), String::from(split_vec[1]));
+            
+            kv_map.entry(String::from(split_vec[0])).or_insert(Vec::new()).push(String::from(split_vec[1]));
         }
     }
-
+    
     write_reduce_output(kv_map, reduce_id)
 }
 
@@ -178,20 +163,20 @@ fn i_hash<T: Hash>(t: &T) -> i32 {
     s.finish() as i32
 }
 
-fn write_reduce_output(kv_map: HashMap<String, String>, reduce_id: i32) {
+fn write_reduce_output(kv_map: HashMap<String, Vec<String>>, reduce_id: i32) {
     let file_path: String = format!("{}/mr-out-{}-{}", "/tmp", reduce_id, std::process::id());
     let mut file = std::fs::OpenOptions::new().read(true).create(true).append(true).open(&file_path).unwrap();
-
     for key in kv_map.keys().sorted() {
-        if let Err(_) = write!(file, "{}", format!("{}, {}\n", key, reduce(&key, &kv_map))) {
+        if let Err(_) = write!(file, "{}", format!("{}, {}\n", key, reduce(&key, &kv_map[key]))) {
             eprintln!("Could not write to file");
         }
     }
 
-    let new_path: String = format!("mr-out-{}", reduce_id);
-    fs::rename(file_path, new_path);
+    let new_path: String = format!("/tmp/mr-out-{}", reduce_id);
+    fs::rename(file_path, new_path).expect("Could not rename file");
 }
 
-fn reduce(_key: &String, values: &HashMap<String, String>) -> String {
+fn reduce(_key: &String, values: &Vec<String>) -> String {
+    println!("{:?}", values);
     values.len().to_string()
 }

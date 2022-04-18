@@ -11,8 +11,6 @@ use std::process;
 use std::time;
 use std::thread;
 use glob::glob;
-use std::fs;
-use std::path::Path;
 use std::env;
     
 pub mod map_reduce {
@@ -74,10 +72,7 @@ impl Coordinator for MRCoordinator {
         let _lock = &self.mu.lock();
 
         let task: Task;
-        println!("n_map {}", *self.n_map.read().unwrap());
-        println!("n_reduce {}", *self.n_reduce.read().unwrap());
         let id = request.into_inner().worker_id;
-        println!("My worker id {}", id);
         if *self.n_map.read().unwrap() > 0 {
             task = self.select_task(&mut *self.map_tasks.write().unwrap(), id);
         } else if *self.n_reduce.read().unwrap() > 0 {
@@ -131,10 +126,6 @@ impl Coordinator for MRCoordinator {
             process::exit(1)
         }
         
-        println!("Worker ID {}", worker_id);
-        println!("Task worker_id {}", task.worker_id);
-        println!("Task status {} (should be 2)", task.status);
-
         if worker_id == task.worker_id && task.status == EXITTASK {
             task.status = 0;
             if task_type == MAPTASK && *self.n_map.read().unwrap() > 0 {
@@ -221,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.remove(0);
 
     let addr = "[::1]:50051".parse()?;
-    let coordinator: MRCoordinator = make_coordinator(args, 2); 
+    let coordinator: MRCoordinator = make_coordinator(args, 1); 
     Server::builder()
         .add_service(CoordinatorServer::new(coordinator))
         .serve(addr)
