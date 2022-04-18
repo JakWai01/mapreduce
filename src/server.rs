@@ -6,13 +6,10 @@ use map_reduce::{
     RequestTaskReply,
 };
 
-use std::sync::{Arc, Mutex, RwLock};
-use std::process;
-use std::time;
-use std::thread;
 use glob::glob;
 use std::env;
-    
+use std::process;
+use std::sync::{Arc, Mutex, RwLock};
 pub mod map_reduce {
     tonic::include_proto!("mapreduce");
 }
@@ -93,8 +90,6 @@ impl Coordinator for MRCoordinator {
             task_file: task.file.clone(),
         };
 
-        self.wait_for_task(task);
-
         Ok(Response::new(reply))
     }
 
@@ -103,13 +98,11 @@ impl Coordinator for MRCoordinator {
         request: Request<ReportTaskArgs>,
     ) -> Result<Response<ReportTaskReply>, Status> {
         println!("Got a request: {:?}", request);
-        
         let req = request.into_inner();
 
         let task_id: i32 = req.task_id;
         let worker_id: i32 = req.worker_id;
         let task_type: i32 = req.task_type;
-       
         let _lock = self.mu.lock();
 
         let mut task: Task;
@@ -125,12 +118,11 @@ impl Coordinator for MRCoordinator {
             );
             process::exit(1)
         }
-        
         if worker_id == task.worker_id && task.status == EXITTASK {
             task.status = 0;
             if task_type == MAPTASK && *self.n_map.read().unwrap() > 0 {
                 let mut n_map = self.n_map.write().unwrap();
-                *n_map -= 1; 
+                *n_map -= 1;
             } else if task_type == REDUCETASK && *self.n_reduce.read().unwrap() > 0 {
                 let mut n_reduce = self.n_reduce.write().unwrap();
                 *n_reduce -= 1;
@@ -148,7 +140,7 @@ impl Coordinator for MRCoordinator {
 }
 
 impl MRCoordinator {
-    pub fn new() -> MRCoordinator {
+    fn new() -> MRCoordinator {
         MRCoordinator {
             mu: Arc::new(Mutex::new(Vec::new())),
             map_tasks: Arc::new(RwLock::new(Vec::new())),
@@ -156,12 +148,6 @@ impl MRCoordinator {
             n_map: Arc::new(RwLock::new(0)),
             n_reduce: Arc::new(RwLock::new(0)),
         }
-    }
-
-    fn done(&self) -> bool {
-        let _lock = self.mu.lock();
-
-        return *self.n_map.read().unwrap() == 0 && *self.n_reduce.read().unwrap() == 0;
     }
 
     fn select_task(&self, task_list: &mut Vec<Task>, worker_id: i32) -> Task {
@@ -181,23 +167,6 @@ impl MRCoordinator {
             worker_id: -1,
         }
     }
-
-    async fn wait_for_task(&self, mut task: Task) {
-        if task.typ != MAPTASK && task.typ != REDUCETASK {
-            return;
-        }
-
-        let ten_seconds = time::Duration::from_millis(10000);
-        thread::sleep(ten_seconds);
-
-        let _lock = self.mu.lock().unwrap();
-
-        // Timeout
-        if task.status == EXECUTING {
-            task.status = NOTSTARTED;
-            task.worker_id = -1;
-        }
-    }
 }
 
 #[tokio::main]
@@ -212,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.remove(0);
 
     let addr = "[::1]:50051".parse()?;
-    let coordinator: MRCoordinator = make_coordinator(args, 1); 
+    let coordinator: MRCoordinator = make_coordinator(args, 1);
     Server::builder()
         .add_service(CoordinatorServer::new(coordinator))
         .serve(addr)
@@ -221,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
+fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
     let mut coordinator = MRCoordinator::new();
     let n_map = files.len();
     *coordinator.n_map.write().unwrap() = n_map as i32;
@@ -251,7 +220,8 @@ pub fn make_coordinator(files: Vec<String>, n_reduce: i32) -> MRCoordinator {
     }
 
     for path in glob("/tmp/mr*").unwrap().filter_map(Result::ok) {
-        std::fs::remove_file(&path).expect(format!("Cannot remove file: {}", path.display()).as_str());
+        std::fs::remove_file(&path)
+            .expect(format!("Cannot remove file: {}", path.display()).as_str());
     }
 
     coordinator
